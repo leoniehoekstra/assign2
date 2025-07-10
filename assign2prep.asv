@@ -135,83 +135,105 @@ parameter_estimates = cell(max_harmonics, 1);
 
 for nh = 1:max_harmonics
     num_params = 3 + 2 * nh;
-    % column for tau_o
-    Phi = ones(length(y), num_params); 
-    % Viscous friction term
-    Phi(:, 2) = yv;
-    % Coulomb friction term
-    Phi(:, 3) = yd; 
     
+    % The regressors are:
+    % 1. A column of ones for the torque offset (tau_o)
+    % 2. Angular velocity (yv) for the viscous friction (d)
+    % 3. Sign of angular velocity (yd) for the Coulomb friction (tau_c)
+    % 4. Sine and cosine terms for the cogging torque
+    
+    Phi = ones(length(y), num_params); % Start with the column for tau_o
+    Phi(:, 2) = yv; % Viscous friction term
+    Phi(:, 3) = yd; % Coulomb friction term
+    
+    % Add columns for cogging harmonics
     for k = 1:nh
-        Phi(:, 3+2*k-1) = sin(k * np * y); % sin(k*np*theta)
-        Phi(:, 3+2*k) = cos(k * np * y); % cos(k*np*theta)
+        Phi(:, 3 + 2*k - 1) = sin(k * np * y); % sin(k*np*theta)
+        Phi(:, 3 + 2*k)     = cos(k * np * y); % cos(k*np*theta)
     end
     
+    % --- Solve for the Parameters using Linear Least Squares ---
+    % We use the filtered torque 'uf' as our measurement vector Y.
+    % The backslash operator is the recommended way to solve this in MATLAB.
     params = Phi \ uf;
+    
     parameter_estimates{nh} = params;
-  
-    % estimate the torque using the estimated parameters
+    
+    % --- Validate the Fit ---
+    % Reconstruct the torque using the estimated parameters
     tau_estimated = Phi * params;
     
-    fit_percentages(nh) = 100 * (1 - norm(uf - tau_estimated)/norm(uf - mean(uf)));
+    % Calculate the goodness of fit (in percent)
+    % This is 100 * (1 - ||measured - estimated|| / ||measured - mean(measured)||)
+    fit_percentages(nh) = 100 * (1 - norm(uf - tau_estimated) / norm(uf - mean(uf)));
 end
 
-% result
+fprintf('Done.\n\n');
+
+%% --- Analyze the Results ---
+
+% Plot the fit percentage vs. the number of harmonics
 figure(4);
 plot(1:max_harmonics, fit_percentages, '-o', 'LineWidth', 2);
-title('Model fit vs. Number of cogging harmonics');
-xlabel('Number of harmonics (nh)');
-ylabel('Fit percentage (%)');
+title('Model Fit vs. Number of Cogging Harmonics');
+xlabel('Number of Harmonics (nh)');
+ylabel('Fit Percentage (%)');
 grid on;
 ylim([min(fit_percentages)-1, 100]);
 
+% Find the best number of harmonics (e.g., where the curve starts to flatten)
+% We can visually inspect the plot. Let's choose nh=4 for detailed analysis,
+% as the improvement typically slows down after the first few harmonics.
+best_nh = 4;
+fprintf('Based on the plot, a good choice is nh = %d harmonics.\n', best_nh);
 
-best_nh = 6;
+% Get the parameters for the chosen number of harmonics
 best_params = parameter_estimates{best_nh};
 
 % Display the estimated physical parameters
-fprintf('\n The estimated paremeters for nh=6');
-fprintf('Torque offset (tau_o): %f Nm\n', best_params(1));
-fprintf('Viscous friction (d): %f Nm/(rad/s)\n', best_params(2));
-fprintf('Coulomb friction (tau_c): %f Nm\n', best_params(3));
+fprintf('\n--- Estimated Parameters (for nh = %d) ---\n', best_nh);
+fprintf('Torque Offset (tau_o):      %f Nm\n', best_params(1));
+fprintf('Viscous Friction (d):       %f Nm/(rad/s)\n', best_params(2));
+fprintf('Coulomb Friction (tau_c):     %f Nm\n', best_params(3));
 
 % Re-calculate the estimated torque for the best model
 Phi_best = ones(length(y), 3 + 2*best_nh);
 Phi_best(:, 2) = yv;
-Phi_best(:, 3) = yd; 
+Phi_best(:, 3) = yd;
 for k = 1:best_nh
     Phi_best(:, 3 + 2*k - 1) = sin(k * np * y);
     Phi_best(:, 3 + 2*k)     = cos(k * np * y);
 end
 tau_best_fit = Phi_best * best_params;
 
-% Plot
+% Plot the measured torque vs. the final estimated torque
 figure(5);
-plot(t, uf, 'b-', 'DisplayName', 'Measured torque (filtered)');
+plot(t, uf, 'b-', 'DisplayName', 'Measured Torque (Filtered)');
 hold on;
-plot(t, tau_best_fit, 'r--', 'LineWidth', 1.5, 'DisplayName', 'Estimated torque');
+plot(t, tau_best_fit, 'r--', 'LineWidth', 1.5, 'DisplayName', 'Estimated Torque');
 hold off;
-title(sprintf('Model validation (fit: %.2f%%)', fit_percentages(best_nh)));
+title(sprintf('Model Validation (Fit: %.2f%%)', fit_percentages(best_nh)));
 xlabel('Time (s)');
 ylabel('Torque (Nm)');
 legend('show');
 grid on;
 xlim([t(1), t(end)]);
 
-tau_offset_contribution = Phi_best(:,1) * best_params(1);
-tau_viscous_contribution = Phi_best(:,2) * best_params(2);
-tau_coulomb_contribution = Phi_best(:,3) * best_params(3);
-tau_cogging_contribution = Phi_best(:, 4:end) * best_params(4:end);
+% Plot the individual torque contributions to understand the model
+tau_offset_contr = Phi_best(:,1) * best_params(1);
+tau_viscous_contr = Phi_best(:,2) * best_params(2);
+tau_coulomb_contr = Phi_best(:,3) * best_params(3);
+tau_cogging_contr = Phi_best(:, 4:end) * best_params(4:end);
 
 figure(6);
 plot(y, uf, 'k.', 'DisplayName', 'Measured Data');
 hold on;
-plot(y, tau_offset_contribution, 'g', 'DisplayName', 'Offset torque');
-plot(y, tau_viscous_contribution, 'm', 'DisplayName', 'Viscous friction');
-plot(y, tau_coulomb_contribution, 'c', 'DisplayName', 'Coulomb friction');
-plot(y, tau_cogging_contribution, 'r', 'DisplayName', 'Cogging torque');
+plot(y, tau_offset_contr, 'g', 'DisplayName', 'Offset Torque');
+plot(y, tau_viscous_contr, 'm', 'DisplayName', 'Viscous Friction');
+plot(y, tau_coulomb_contr, 'c', 'DisplayName', 'Coulomb Friction');
+plot(y, tau_cogging_contr, 'r', 'DisplayName', 'Cogging Torque');
 hold off;
-title('Torque contributions vs. angle');
+title('Torque Contributions vs. Angle');
 xlabel('Angle (rad)');
 ylabel('Torque (Nm)');
 legend('show');
